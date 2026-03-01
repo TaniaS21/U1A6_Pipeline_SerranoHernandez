@@ -82,3 +82,6 @@ Ejemplo:
 ##  Resultado
 
 Se logró un sistema reproducible de adquisición y calibración de sensores, con documentación, versionado y evidencia estructurada.
+
+## Evidencia de ejecución
+Se incluyen capturas del dashboard activo, fragmento del CSV y flujo de Node-RED.
