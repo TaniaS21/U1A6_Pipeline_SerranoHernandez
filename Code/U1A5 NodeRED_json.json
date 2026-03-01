@@ -1,0 +1,451 @@
+[
+    {
+        "id": "ff5fba594b3a719d",
+        "type": "tab",
+        "label": "Flow 6",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "ad120619773debca",
+        "type": "serial in",
+        "z": "ff5fba594b3a719d",
+        "name": "",
+        "serial": "c7ed84873236d491",
+        "x": 170,
+        "y": 160,
+        "wires": [
+            [
+                "781283c5cca68777",
+                "c2fdf818d4cc95dc"
+            ]
+        ]
+    },
+    {
+        "id": "781283c5cca68777",
+        "type": "function",
+        "z": "ff5fba594b3a719d",
+        "name": "Parse + Calibración + Detección",
+        "func": "// Espera líneas CSV: t_ms,s1,s2\n// Ejemplo: 123456,812,790\n\nlet line = (msg.payload || \"\").toString().trim();\nif (!line) return null;\n\n// Ignorar header si viene\nif (line.toLowerCase().startsWith(\"t_ms\")) return null;\n\n// ---- Parse CSV ----\nlet parts = line.split(\",\");\nif (parts.length < 2) return null;\n\nlet t = parseInt(parts[0], 10);\nlet s1 = parseInt(parts[1], 10);\nlet s2 = (parts.length >= 3) ? parseInt(parts[2], 10) : null;\n\nif (isNaN(t) || isNaN(s1) || (s2 !== null && isNaN(s2))) return null;\n\n// ---- Contador (MODIFICADO: ahora usa FLOW) ----\nlet count = flow.get(\"count\") || 0;\ncount++;\nflow.set(\"count\", count);\n\n// ---- Parámetros guardados ----\n// min_line = NEGRO (sobre línea)\n// max_floor = BLANCO (fondo)\nlet min1 = context.get(\"min1\");  // negro s1\nlet max1 = context.get(\"max1\");  // blanco s1\nlet min2 = context.get(\"min2\");\nlet max2 = context.get(\"max2\");\n\n// ---- Modo de captura (lo ponen los botones) ----\nlet captureMode = flow.get(\"captureMode\") || \"none\"; // \"black\" | \"white\" | \"none\"\n\n// Captura NEGRO -> guarda min_line\nif (captureMode === \"black\") {\n  context.set(\"min1\", s1);\n  if (s2 !== null) context.set(\"min2\", s2);\n  flow.set(\"captureMode\", \"none\");\n  captureMode = \"none\";\n}\n\n// Captura BLANCO -> guarda max_floor\nif (captureMode === \"white\") {\n  context.set(\"max1\", s1);\n  if (s2 !== null) context.set(\"max2\", s2);\n  flow.set(\"captureMode\", \"none\");\n  captureMode = \"none\";\n}\n\n// Actualiza variables después de capturar\nmin1 = context.get(\"min1\");\nmax1 = context.get(\"max1\");\nmin2 = context.get(\"min2\");\nmax2 = context.get(\"max2\");\n\n// ---- Cálculo umbral sugerido ----\nlet thr1 = (min1 !== undefined && max1 !== undefined) ? Math.round((min1 + max1) / 2) : null;\nlet thr2 = (s2 !== null && min2 !== undefined && max2 !== undefined) ? Math.round((min2 + max2) / 2) : null;\n\n// ---- Normalización (0..1), con limitación ----\nfunction norm(s, mn, mx) {\n  if (mn === undefined || mx === undefined) return null;\n  let d = (mx - mn);\n  if (d === 0) return null;\n  let x = (s - mn) / d;\n  if (x < 0) x = 0;\n  if (x > 1) x = 1;\n  return x;\n}\nlet n1 = norm(s1, min1, max1);\nlet n2 = (s2 !== null) ? norm(s2, min2, max2) : null;\n\n// ---- Detección LINEA/NO LINEA usando thr ----\n// Si te sale invertido, cambia (s <= thr) por (s >= thr)\nfunction detectLine(s, thr) {\n  if (thr === null) return null;\n  return (s <= thr) ? 1 : 0;  // 1=LINEA, 0=NO LINEA\n}\nlet d1 = detectLine(s1, thr1);\nlet d2 = (s2 !== null) ? detectLine(s2, thr2) : null;\n\n// ---- Charts (solo números) ----\nlet outChart1 = { payload: s1, topic: \"s1\" };\nlet outChart2 = (s2 !== null) ? { payload: s2, topic: \"s2\" } : null;\n\n// ---- Textos (campos separados, para UI bonito) ----\nlet outTexts = {\n  payload: {\n    t_ms: t,\n    s1: s1,\n    s2: (s2 !== null ? s2 : \"\"),\n    norm1: (n1 !== null ? Number(n1.toFixed(3)) : \"\"),\n    norm2: (n2 !== null ? Number(n2.toFixed(3)) : \"\"),\n    estado1: (d1 === null ? \"SIN THR\" : (d1 ? \"LINEA\" : \"NO LINEA\")),\n    estado2: (d2 === null ? \"SIN THR\" : (d2 ? \"LINEA\" : \"NO LINEA\")),\n    min1: (min1 ?? \"\"),\n    min2: (min2 ?? \"\"),\n    max1: (max1 ?? \"\"),\n    max2: (max2 ?? \"\"),\n    thr1: (thr1 ?? \"\"),\n    thr2: (thr2 ?? \"\"),\n    count: count\n  }\n};\n\n// ---- Registro: fila para CSV ----\nlet row = {\n  t_ms: t,\n  s1: s1,\n  s2: (s2 !== null ? s2 : \"\"),\n  s1_norm: (n1 !== null ? Number(n1.toFixed(4)) : \"\"),\n  s2_norm: (n2 !== null ? Number(n2.toFixed(4)) : \"\"),\n  thr1: (thr1 !== null ? thr1 : \"\"),\n  thr2: (thr2 !== null ? thr2 : \"\")\n};\n\nlet outCSV = { payload: row };\n\n// ---- Retorno con 4 salidas ----\n// 1: chart s1\n// 2: chart s2\n// 3: textos\n// 4: csv row\nreturn [outChart1, outChart2, outTexts, outCSV];",
+        "outputs": 4,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 470,
+        "y": 160,
+        "wires": [
+            [
+                "92fbf8c12bdb4175"
+            ],
+            [
+                "2becd7ad9af1b3cc"
+            ],
+            [
+                "34d4a4bf3265d1b8",
+                "dbd90e730ae24eb2",
+                "900295910408959a"
+            ],
+            [
+                "121c83d263bfb5aa"
+            ]
+        ]
+    },
+    {
+        "id": "6e293bf11a39cdd0",
+        "type": "function",
+        "z": "ff5fba594b3a719d",
+        "name": "Set captureMode=black",
+        "func": "flow.set(\"captureMode\", \"black\");\nreturn { payload: \"BLACK armado\" };",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 470,
+        "y": 320,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "3439f0d539adac75",
+        "type": "function",
+        "z": "ff5fba594b3a719d",
+        "name": "Set captureMode=white",
+        "func": "flow.set(\"captureMode\", \"white\");\nreturn { payload: \"WHITE armado\" };",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 510,
+        "y": 400,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "121c83d263bfb5aa",
+        "type": "csv",
+        "z": "ff5fba594b3a719d",
+        "name": "A CSV",
+        "spec": "rfc",
+        "sep": ",",
+        "hdrin": "",
+        "hdrout": "none",
+        "multi": "one",
+        "ret": "\\r\\n",
+        "temp": "t_ms,s1,s2,s1_norm,s2_norm,thr1,thr2",
+        "skip": "0",
+        "strings": true,
+        "include_empty_strings": "",
+        "include_null_values": "",
+        "x": 790,
+        "y": 360,
+        "wires": [
+            [
+                "5f60a2c1850975d0"
+            ]
+        ]
+    },
+    {
+        "id": "5f60a2c1850975d0",
+        "type": "file",
+        "z": "ff5fba594b3a719d",
+        "name": "",
+        "filename": "C:\\Users\\User\\Desktop\\Calibracion.csv",
+        "filenameType": "str",
+        "appendNewline": true,
+        "createDir": false,
+        "overwriteFile": "false",
+        "encoding": "utf8",
+        "x": 1050,
+        "y": 360,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "92fbf8c12bdb4175",
+        "type": "ui_chart",
+        "z": "ff5fba594b3a719d",
+        "name": "",
+        "group": "5df12143fc1df1f9",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "label": "Gráfica s1",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "",
+        "ymax": "",
+        "removeOlder": 1,
+        "removeOlderPoints": "",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#1f77b4",
+            "#aec7e8",
+            "#ff7f0e",
+            "#2ca02c",
+            "#98df8a",
+            "#d62728",
+            "#ff9896",
+            "#9467bd",
+            "#c5b0d5"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 830,
+        "y": 40,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "2becd7ad9af1b3cc",
+        "type": "ui_chart",
+        "z": "ff5fba594b3a719d",
+        "name": "",
+        "group": "5df12143fc1df1f9",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "label": "Gráfica s2",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "",
+        "ymax": "",
+        "removeOlder": 1,
+        "removeOlderPoints": "",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#1f77b4",
+            "#aec7e8",
+            "#ff7f0e",
+            "#2ca02c",
+            "#98df8a",
+            "#d62728",
+            "#ff9896",
+            "#9467bd",
+            "#c5b0d5"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 930,
+        "y": 160,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "34d4a4bf3265d1b8",
+        "type": "ui_text",
+        "z": "ff5fba594b3a719d",
+        "group": "5df12143fc1df1f9",
+        "order": 2,
+        "width": 0,
+        "height": 0,
+        "name": "",
+        "label": "Valores actuales",
+        "format": "t_ms: {{msg.payload.t_ms}} s1: {{msg.payload.s1}}  (n: {{msg.payload.norm1}})  -> {{msg.payload.estado1}} s2: {{msg.payload.s2}}  (n: {{msg.payload.norm2}})  -> {{msg.payload.estado2}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#000000",
+        "x": 1020,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "dbd90e730ae24eb2",
+        "type": "ui_text",
+        "z": "ff5fba594b3a719d",
+        "group": "5df12143fc1df1f9",
+        "order": 3,
+        "width": 0,
+        "height": 0,
+        "name": "",
+        "label": "Parametros",
+        "format": "NEGRO min: s1={{msg.payload.min1}} s2={{msg.payload.min2}} BLANCO max: s1={{msg.payload.max1}} s2={{msg.payload.max2}} thr: s1={{msg.payload.thr1}} s2={{msg.payload.thr2}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#000000",
+        "x": 1010,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "900295910408959a",
+        "type": "ui_text",
+        "z": "ff5fba594b3a719d",
+        "group": "5df12143fc1df1f9",
+        "order": 4,
+        "width": 0,
+        "height": 0,
+        "name": "",
+        "label": "Contador",
+        "format": "{{msg.payload.count}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#000000",
+        "x": 960,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "57f5055b650b2638",
+        "type": "ui_button",
+        "z": "ff5fba594b3a719d",
+        "name": "",
+        "group": "5df12143fc1df1f9",
+        "order": 5,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Capturar NEGRO",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "",
+        "payloadType": "str",
+        "topic": "capture",
+        "topicType": "msg",
+        "x": 230,
+        "y": 280,
+        "wires": [
+            [
+                "6e293bf11a39cdd0"
+            ]
+        ]
+    },
+    {
+        "id": "9bb7804027ededca",
+        "type": "ui_button",
+        "z": "ff5fba594b3a719d",
+        "name": "",
+        "group": "5df12143fc1df1f9",
+        "order": 6,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Capturar BLANCO",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "",
+        "payloadType": "str",
+        "topic": "capture",
+        "topicType": "msg",
+        "x": 230,
+        "y": 360,
+        "wires": [
+            [
+                "3439f0d539adac75"
+            ]
+        ]
+    },
+    {
+        "id": "7183b05ca8d477ac",
+        "type": "ui_button",
+        "z": "ff5fba594b3a719d",
+        "name": "",
+        "group": "5df12143fc1df1f9",
+        "order": 7,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Reiniciar",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 240,
+        "y": 500,
+        "wires": [
+            [
+                "062d056902c1ca22"
+            ]
+        ]
+    },
+    {
+        "id": "062d056902c1ca22",
+        "type": "function",
+        "z": "ff5fba594b3a719d",
+        "name": "function 4",
+        "func": "flow.set(\"count\", 0);\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 440,
+        "y": 500,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "c2fdf818d4cc95dc",
+        "type": "debug",
+        "z": "ff5fba594b3a719d",
+        "name": "debug 5",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 280,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "c7ed84873236d491",
+        "type": "serial-port",
+        "name": "Esp32",
+        "serialport": "COM9",
+        "serialbaud": "115200",
+        "databits": 8,
+        "parity": "none",
+        "stopbits": 1,
+        "waitfor": "",
+        "dtr": "none",
+        "rts": "none",
+        "cts": "none",
+        "dsr": "none",
+        "newline": "\\n",
+        "bin": "false",
+        "out": "char",
+        "addchar": "",
+        "responsetimeout": 10000
+    },
+    {
+        "id": "5df12143fc1df1f9",
+        "type": "ui_group",
+        "name": "Group 1",
+        "tab": "f77b65d76a87cc38",
+        "order": 1,
+        "disp": true,
+        "width": "10",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "f77b65d76a87cc38",
+        "type": "ui_tab",
+        "name": "Prueba",
+        "icon": "dashboard",
+        "order": 3,
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "06daaeee1eeb6a34",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-node-serialport": "2.0.3",
+            "node-red-dashboard": "3.6.6"
+        }
+    }
+]

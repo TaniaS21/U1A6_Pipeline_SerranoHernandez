@@ -1,0 +1,110 @@
+[
+    {
+        "id": "b2767a08cac1a603",
+        "type": "tab",
+        "label": "Flow 2",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "2cb328256bea9094",
+        "type": "serial in",
+        "z": "b2767a08cac1a603",
+        "name": "ESP32",
+        "serial": "",
+        "x": 170,
+        "y": 220,
+        "wires": [
+            [
+                "213afb0adbabd205",
+                "0a0824bb392310b1"
+            ]
+        ]
+    },
+    {
+        "id": "eac4a24b5fccf406",
+        "type": "file",
+        "z": "b2767a08cac1a603",
+        "name": "",
+        "filename": "C:\\Users\\User\\Desktop\\datos.csv",
+        "filenameType": "str",
+        "appendNewline": true,
+        "createDir": false,
+        "overwriteFile": "false",
+        "encoding": "utf8",
+        "x": 840,
+        "y": 220,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "0a0824bb392310b1",
+        "type": "debug",
+        "z": "b2767a08cac1a603",
+        "name": "debug 4",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 340,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "59ef2c8de60ef70d",
+        "type": "csv",
+        "z": "b2767a08cac1a603",
+        "name": "",
+        "spec": "rfc",
+        "sep": ",",
+        "hdrin": "",
+        "hdrout": "none",
+        "multi": "one",
+        "ret": "\\r\\n",
+        "temp": "t_ms,s",
+        "skip": "0",
+        "strings": true,
+        "include_empty_strings": "",
+        "include_null_values": "",
+        "x": 550,
+        "y": 160,
+        "wires": [
+            [
+                "eac4a24b5fccf406"
+            ]
+        ]
+    },
+    {
+        "id": "213afb0adbabd205",
+        "type": "function",
+        "z": "b2767a08cac1a603",
+        "name": "function 2",
+        "func": "let line = (msg.payload || \"\").toString().trim();\nif (!line) return null;\n\n// Ignora encabezado\nif (line.startsWith(\"t_ms\")) return null;\n\nlet parts = line.split(\",\");\nif (parts.length < 2) return null;\n\nlet t = Number(parts[0]);\nlet s = Number(parts[1]);\n\nif (!Number.isFinite(t) || !Number.isFinite(s)) return null;\n\n// NO aplicar umbrales, NO redondear\nmsg.payload = { t_ms: t, s: s };\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 340,
+        "y": 160,
+        "wires": [
+            [
+                "59ef2c8de60ef70d"
+            ]
+        ]
+    },
+    {
+        "id": "d92c4a3d0a828dc4",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-node-serialport": "2.0.3"
+        }
+    }
+]
